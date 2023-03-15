@@ -5,29 +5,13 @@ if [[ $(/usr/bin/id -u) -ne 0 ]]; then
     exit
 fi
 
-domains=(ipfs.example.org) # replace with your personal domains
+domains=(saiameasures.site) # replace with your personal domains
 rsa_key_size=2048         # set the key size to whatever you'd like
 data_path="./data"        # define the path
-email="example@email.com"  # replace with your actual address
-cluster_name="clevername" # name the ipfs cluster
+email="logasja@outlook.com"  # replace with your actual address
 staging=0                 # Set to 1 if testing
 
-# if [ -d "$data_path" ]; then
-#   read -p "Existing data found for $domains. Continue and replace existing configs? (y/N) " decision
-#   if [ "$decision" != "Y"] && [ "$decision" !="y" ]; then
-#     exit
-#   fi
-# fi
-
 mkdir -p "$data_path/webroot"
-
-# Generating cluster secret or get it from file
-if [ ! -e "./secret.txt" ]; then
-  hexdump -n 32 -e '4/4 "%08X" 1 ""' /dev/random > ./cluster_secret.txt
-  # od  -vN 32 -An -tx1 /dev/urandom | base64 -w 0 - |  od -t x8 -An | tr -d ' \n' > ./cluster_secret.txt
-  cluster_secret=$(cat cluster_secret.txt)
-  echo $cluster_secret
-fi
 
 if [ ! -e "$data_path/nginx-conf/nginx.conf" ]; then
   echo "### Generating initial nginx.conf"
@@ -64,48 +48,26 @@ if [ ! -e "$data_path/conf/dhparam/dhparam-$rsa_key_size.pem" ]; then
   echo
 fi
 
-# Generate the docker compose file
+# Generate the docker-compose file
 if [ ! -e "./docker-compose.yaml" ]; then
   echo "### Generating docker-compose"
   echo -n "version: \"3.8\"
 services:
-  ipfs:
-    container_name: ipfs
-    image: ipfs/go-ipfs:latest
+  fawkes:
+    container_name: fawkes
+    image: rocketcode/fawkes:3.2
     restart: unless-stopped
-    environment:
-      - IPFS_PROFILE=server
-    volumes:
-      - ./data/ipfs:/data/ipfs
-    # ports:
-    # - \"4001:4001\" # ipfs swarm - expose if needed/wanted
-    # - \"5001:5001\" # ipfs api - expose if needed/wanted
-    # - \"8080:8080\" # ipfs gateway - expose if needed/wanted
-      
-  cluster:
-    container_name: cluster
-    image: ipfs/ipfs-cluster:latest
+    runtime: nvidia
+  lowkey:
+    container_name: lowkey
+    image: rocketcode/lowkey:2.0
     restart: unless-stopped
-    depends_on:
-      - ipfs
-    environment:
-      CLUSTER_PEERNAME: cluster-$cluster_name
-      CLUSTER_SECRET: $cluster_secret
-      CLUSTER_IPFSHTTP_NODEMULTIADDRESS: /dns4/ipfs/tcp/5001
-      CLUSTER_CRDT_TRUSTEDPEERS: '*' # Trust all peers in Cluster
-      CLUSTER_RESTAPI_HTTPLISTENMULTIADDRESS: /ip4/0.0.0.0/tcp/9094 # Expose API
-      CLUSTER_MONITORPINGINTERVAL: 2s # Speed up peer discovery
-    ports:
-          # Open API port (allows ipfs-cluster-ctl usage on host)
-          - \"127.0.0.1:9094:9094\"
-          # The cluster swarm port would need  to be exposed if this container
-          # was to connect to cluster peers on other hosts.
-          # But this is just a testing cluster.
-          # Cluster IPFS proxy endpoint
-          # - \"9096:9096\"
-    volumes:
-      - ./data/cluster:/data/ipfs-cluster
-
+    runtime: nvidia
+  obfuscate:
+    container_name: obfuscate
+    image: rocketcode/obfuscate_gradio:1.1
+    restart: unless-stopped
+    runtime: nvidia
   nginx:
     image: nginx:mainline-alpine
     container_name: nginx
@@ -120,11 +82,12 @@ services:
       - \"80:80\"
       - \"443:443\"
     depends_on:
-      - ipfs
-      - cluster
+      - fawkes
+      - lowkey
     links:
-      - \"ipfs:ipfs\"
-      - \"cluster:cluster\"
+      - \"fawkes:fawkes\"
+      - \"lowkey:lowkey\"
+      - \"obfuscate:obfuscate\"
   certbot:
     image: certbot/certbot
     container_name: certbot
@@ -188,7 +151,7 @@ else
 fi
 
 # Replace command line in compose
-echo "### Modifying docker compose"
+echo "### Modifying docker-compose"
 sed -i "s|--staging ||g" ./docker-compose.yaml
 echo
 
@@ -229,21 +192,42 @@ echo -n "server {
   ssl_stapling on;
   ssl_stapling_verify on;
 
-  location / {
-    proxy_pass  http://ipfs:8080/;
+  client_max_body_size 100M;
+
+  location /lowkey/ {
+    proxy_pass  http://lowkey:7860/;
     proxy_set_header    Host                \$http_host;
     proxy_set_header    X-Real-IP           \$remote_addr;
     proxy_set_header    X-Forwarded-For     \$proxy_add_x_forwarded_for;
   }
-}" >> "$data_path/conf/nginx-conf/nginx.conf"
 
-echo "### Spinning up, once done you should be able to use ipfs gateway"
+  location /fawkes/ {
+    proxy_pass http://fawkes:7860/;
+    proxy_set_header    Host                \$http_host;
+    proxy_set_header    X-Real-IP           \$remote_addr;
+    proxy_set_header    X-Forwarded-For     \$proxy_add_x_forwarded_for;
+    proxy_read_timeout                      20m;
+    proxy_connect_timeout                   20m;
+    proxy_send_timeout                      20m;
+  }
+
+  location /obfuscate/ {
+    proxy_pass http://obfuscate:7860/;
+    proxy_set_header    Host                \$http_host;
+    proxy_set_header    X-Real-IP           \$remote_addr;
+    proxy_set_header    X-Forwarded-For     \$proxy_add_x_forwarded_for;
+  }
+}
+
+" >> "$data_path/conf/nginx-conf/nginx.conf"
+
+echo "### Spinning up, once done you should be able to use the models"
 docker-compose up -d --force-recreate --no-deps nginx
 sleep 15
 if [ $( docker-compose ps nginx | grep "Up" | wc -l ) -eq 1 ]; then
   # Certbot exited correctly
   docker-compose ps
-  echo "Nginx is running, test out your ipfs gateway!"
+  echo "Nginx is running, test out your model!"
 else
   # Certbot did not exit correctly
   docker-compose logs nginx
