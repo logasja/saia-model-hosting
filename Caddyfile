@@ -1,0 +1,33 @@
+{
+  email logasja@gatech.edu
+}
+
+saiameasures.site {
+  handle /lowkey {
+    redir https://lowkey.saiameasures.site
+  }
+  handle /fawkes {
+    redir https://fawkes.saiameasures.site
+  }
+  handle /naive {
+    redir https://naive.saiameasures.site
+  }
+}
+
+lowkey.saiameasures.site {
+  reverse_proxy lowkey:7860 {
+    flush_interval 10
+  }
+}
+
+fawkes.saiameasures.site {
+  reverse_proxy fawkes:7860 {
+    flush_interval 10
+  }
+}
+
+naive.saiameasures.site {
+  reverse_proxy obfuscate:7860 {
+    flush_interval 10
+  }
+}

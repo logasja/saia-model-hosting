@@ -1,0 +1,38 @@
+version: "3.8"
+services:
+  fawkes:
+    container_name: fawkes
+    image: rocketcode/fawkes:3.2
+    restart: unless-stopped
+    runtime: nvidia
+  lowkey:
+    container_name: lowkey
+    image: rocketcode/lowkey:2.0
+    restart: unless-stopped
+    runtime: nvidia
+  obfuscate:
+    container_name: obfuscate
+    image: rocketcode/obfuscate_gradio:1.1
+    restart: unless-stopped
+    runtime: nvidia
+  caddy:
+    container_name: caddy
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    depends_on:
+      - fawkes
+      - lowkey
+      - obfuscate
+    volumes:
+      - $PWD/Caddyfile:/etc/caddy/Caddyfile
+      - $PWD/site:/srv
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
